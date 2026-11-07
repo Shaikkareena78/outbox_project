@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EmailStatus {
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id              String           @id @default(cuid())
+  googleSub       String           @unique
+  email           String           @unique
+  name            String
+  picture         String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  slackConnection SlackConnection?
+  campaigns       Campaign[]
+  emails          Email[]
+}
+
+model SlackConnection {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  encryptedWebhook String
+  teamName         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Campaign {
+  id             String   @id @default(cuid())
+  userId         String
+  idempotencyKey String?  @unique
+  subject        String
+  body           String   @db.Text
+  sender         String
+  startAt        DateTime
+  delayMs        Int
+  hourlyLimit    Int
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails         Email[]
+
+  @@index([userId, createdAt])
+}
+
+model Email {
+  id          String      @id @default(cuid())
+  userId      String
+  campaignId  String
+  recipient   String
+  subject     String
+  body        String      @db.Text
+  sender      String
+  scheduledAt DateTime
+  sentAt      DateTime?
+  status      EmailStatus @default(SCHEDULED)
+  error       String?     @db.Text
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign    Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, recipient])
+  @@index([userId, status, scheduledAt])
+  @@index([userId, sentAt])
+}

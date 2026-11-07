@@ -1,0 +1,19 @@
+{
+  "name": "reachinbox-email-scheduler",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev -w backend",
+    "dev:worker": "npm run worker:dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "setup:backend": "npm run setup:env -w backend",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "db:generate": "npm run prisma:generate -w backend",
+    "db:validate": "npm run prisma:validate -w backend",
+    "db:migrate": "npm run prisma:deploy -w backend",
+    "db:migrate:dev": "npm run prisma:migrate -w backend"
+  }
+}
