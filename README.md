@@ -79,7 +79,7 @@ Open `http://localhost:5173/?demo=1` to load a sample user, scheduled/sent/faile
 
 ### View the live demo
 
-The GitHub Actions workflow deploys the frontend demo to GitHub Pages on pushes to `main`. Enable **Settings → Pages → Build and deployment → Source → GitHub Actions** in the repository to publish it. The site uses sample data only and does not connect to the backend:
+The `main` branch contains only the built frontend output. The editable source code is on the `source` branch, which triggers the GitHub Actions deployment to Pages. Enable **Settings → Pages → Build and deployment → Source → GitHub Actions** in the repository to publish it. The site uses sample data only and does not connect to the backend:
 
 https://shaikkareena78.github.io/outbox_project/
 
