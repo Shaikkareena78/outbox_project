@@ -77,6 +77,12 @@ npm run dev:frontend
 
 Open `http://localhost:5173/?demo=1` to load a sample user, scheduled/sent/failed emails, and demo SMTP senders. The compose form adds rows to browser local storage; this mode does not contact SMTP, Redis, PostgreSQL, Elasticsearch, Google, or Slack. Remove `?demo=1` to return to real API and OAuth mode.
 
+### View the live demo
+
+The GitHub Actions workflow deploys the frontend demo to GitHub Pages on pushes to `main`. Enable **Settings → Pages → Build and deployment → Source → GitHub Actions** in the repository to publish it. The site uses sample data only and does not connect to the backend:
+
+https://shaikkareena78.github.io/outbox_project/
+
 ## Slack notifications
 
 1. Create a Slack app and enable OAuth.

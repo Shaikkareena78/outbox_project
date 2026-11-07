@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1";
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "1" || new URLSearchParams(window.location.search).get("demo") === "1";
 
 interface User {
   id: string;
