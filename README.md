@@ -34,16 +34,7 @@ A TypeScript monorepo for a persistent email scheduling demo. The API stores cam
    - Add `http://localhost:4000/auth/google/callback` as an authorized redirect URI in Google Cloud Console.
    - Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `backend\.env`.
 
-4. Configure Ethereal:
-
-   - Create an account at [Ethereal Email](https://ethereal.email/) and copy its SMTP username/password into `ETHEREAL_USER` and `ETHEREAL_PASS`.
-   - To use multiple sender accounts, set `ETHEREAL_SENDERS` to a JSON array, for example:
-
-     ```text
-     ETHEREAL_SENDERS=[{"email":"sender-one@ethereal.email","user":"smtp-user-one","pass":"smtp-pass-one"},{"email":"sender-two@ethereal.email","user":"smtp-user-two","pass":"smtp-pass-two"}]
-     ```
-
-     Keep this JSON on one line and do not commit real credentials. Each selected sender is sent through its matching SMTP account.
+4. Configure Ethereal as described in [Environment variables and Ethereal SMTP](#environment-variables-and-ethereal-smtp). Keep all credentials local; do not commit them.
 
 5. Apply the checked-in database migration:
 
@@ -51,7 +42,7 @@ A TypeScript monorepo for a persistent email scheduling demo. The API stores cam
    npm run db:migrate
    ```
 
-6. Run the API, worker, and dashboard in three terminals from the project root:
+6. Run the Express API, BullMQ worker, and frontend in three separate terminals from the project root:
 
    ```powershell
    npm run dev:backend
@@ -66,6 +57,40 @@ A TypeScript monorepo for a persistent email scheduling demo. The API stores cam
    ```
 
    Open `http://localhost:5173`. The API listens at `http://localhost:4000`. Optionally set `frontend/.env.local` to `VITE_API_URL=http://localhost:4000` if using a non-default API URL.
+
+   Confirm the API, PostgreSQL, and Redis are ready at `http://localhost:4000/health`. Elasticsearch is used for search indexing; its service is started by Docker Compose.
+
+### Environment variables and Ethereal SMTP
+
+`npm run setup:backend` copies `backend/.env.example` to `backend/.env` and generates fresh session and encryption secrets. It deliberately does not overwrite an existing `.env`. The backend validates configuration at startup; keep `.env` local and never commit real credentials.
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string; defaults to the local Compose database. |
+| `REDIS_URL` | Redis connection for BullMQ and atomic sender limits. |
+| `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX` | Elasticsearch endpoint and index used for email search. |
+| `SESSION_SECRET` | At least 32 characters; signs login sessions. |
+| `TOKEN_ENCRYPTION_KEY` | Exactly 64 hexadecimal characters (32 bytes); encrypts stored Slack webhook tokens. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth credentials; required for real dashboard login. |
+| `GOOGLE_CALLBACK_URL` | OAuth callback; register `http://localhost:4000/auth/google/callback` in Google Cloud Console. |
+| `ETHEREAL_HOST`, `ETHEREAL_PORT` | SMTP host and port; defaults to `smtp.ethereal.email:587`. |
+| `ETHEREAL_USER`, `ETHEREAL_PASS` | Default Ethereal SMTP account credentials. |
+| `ETHEREAL_SENDERS` | Optional one-line JSON array of sender-specific SMTP accounts (see example below). |
+| `EMAIL_FROM` | Fallback display name/address for the SMTP message. |
+| `WORKER_CONCURRENCY` | Maximum simultaneous BullMQ jobs per worker process; defaults to `10`. |
+| `MIN_SEND_INTERVAL_MS` | Minimum time between send starts per sender; defaults to `2000` ms. |
+| `MAX_EMAILS_PER_HOUR_PER_SENDER` | Global fixed-UTC-hour cap per sender; defaults to `200`. |
+| `FRONTEND_URL`, `CORS_ORIGIN`, `API_URL`, `PORT` | Frontend origin, allowed CORS origin, public API URL, and API listen port. |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_CALLBACK_URL` | Optional Slack OAuth configuration for limit notifications. |
+| `QUEUE_DASHBOARD_USER`, `QUEUE_DASHBOARD_PASSWORD` | Basic Auth credentials for `/admin/queues`; change the local defaults before exposing the API. |
+
+Create a free test account at [Ethereal Email](https://ethereal.email/), then copy the SMTP username and password from its account page into `ETHEREAL_USER` and `ETHEREAL_PASS`. Ethereal captures test messages rather than delivering them to real recipients. Multiple sender accounts can be configured as:
+
+```text
+ETHEREAL_SENDERS=[{"email":"sender-one@ethereal.email","user":"smtp-user-one","pass":"smtp-pass-one"},{"email":"sender-two@ethereal.email","user":"smtp-user-two","pass":"smtp-pass-two"}]
+```
+
+The selected sender address must match one of the configured accounts. Keep the JSON on one line. For a dashboard-only preview without OAuth, SMTP, or backend services, use demo mode (`http://localhost:5173/?demo=1`); demo mode simulates compose actions in browser storage and does not send mail.
 
 ### Run the dashboard with demo data
 
@@ -138,15 +163,49 @@ Example request (authenticated session cookie required):
 
 ## Implemented features
 
-- **Backend:** Express/TypeScript API, PostgreSQL/Prisma persistence, BullMQ delayed jobs, restart reconciliation, per-sender concurrency-safe throttling and hourly rate limits, Slack notification webhook, Ethereal SMTP sender selection, Elasticsearch indexing/search, authenticated Bull Board.
-- **Frontend:** React/TypeScript dashboard, Google OAuth login/logout, user profile, scheduled/sent/failed status views, 10-second refresh, Elasticsearch search, campaign compose modal, CSV/text email extraction and deduplication, schedule controls, Slack connect/disconnect, loading/empty/error states.
+### Backend
+
+- **Scheduler:** Express endpoints validate campaign input, deduplicate recipients, persist each recipient as an email row, and enqueue a delayed BullMQ job keyed by that email ID. `Idempotency-Key` supports safe request retries.
+- **Persistence:** Prisma stores users, campaigns, emails, and Slack connections in PostgreSQL. Docker Compose keeps PostgreSQL and Redis data in named volumes.
+- **Restart recovery:** On API startup, scheduled database rows are reconciled with missing BullMQ jobs. Redis AOF and its named volume preserve delayed jobs across container restarts; the API can reconstruct missing queue jobs from PostgreSQL.
+- **Rate limiting:** Redis Lua scripts atomically reserve a per-sender global hourly cap and a per-campaign cap using fixed UTC-hour windows. A limit hit delays the BullMQ job until the next UTC hour and can trigger one Slack notification per user/sender/hour.
+- **Concurrency and pacing:** BullMQ worker concurrency is configurable with `WORKER_CONCURRENCY`; a Redis-backed per-sender throttle enforces `MIN_SEND_INTERVAL_MS` across worker instances. Conditional database status updates prevent two workers from claiming the same email.
+- **Delivery and search:** Ethereal SMTP sends test messages. Elasticsearch indexes emails for authenticated search. Bull Board exposes a Basic-Auth-protected queue dashboard.
+
+### Frontend
+
+- Google OAuth login/logout and a signed-in user/profile display.
+- Dashboard tables/views for **Scheduled**, **Sent**, and **Failed** emails, with status refresh and empty/loading/error states.
+- Campaign compose form with recipient input and CSV lead import, email extraction, and duplicate removal.
+- Sender selection, start time, per-recipient delay, and campaign hourly limit controls.
+- Search across email recipient, subject, body, and sender.
+- Slack connect/disconnect controls and connection status.
+- Local demo mode with sample data, simulated sending, and browser-local persistence; it does not call the backend or send actual email.
+
+## Assumptions, shortcuts, and trade-offs
+
+- Google OAuth and real Ethereal credentials are required for an end-to-end live backend demo; OAuth and SMTP are intentionally not mocked in normal mode.
+- Ethereal is a test inbox only. The sample app is not a production mail service and should not be used for unsolicited mail.
+- PostgreSQL is the source of truth for campaign/email state, while BullMQ jobs are recoverable from scheduled database rows. Redis and PostgreSQL use local named Docker volumes for restart persistence.
+- SMTP cannot participate in a PostgreSQL transaction. If a process stops after SMTP accepts a message but before the database marks it sent, recovery marks the `SENDING` row failed with an “outcome unknown” error rather than risking an automatic duplicate. Check Ethereal's message log before manually retrying.
+- Search indexing is best effort: an Elasticsearch error is logged and does not change delivery status.
+- Demo mode uses seeded browser-local data to preview UI; it is not evidence that scheduling, SMTP delivery, or restart recovery worked.
+
+## Demo video (maximum 5 minutes)
+
+A real recording should use the frontend in normal mode, a configured Google account, and Ethereal test credentials (not `?demo=1`). Suggested timeline:
+
+1. **0:00–0:45 — Setup/overview:** Show the dashboard and the running API/worker.
+2. **0:45–1:45 — Schedule:** Compose a campaign for test recipients with a future start time and a visible delay; submit it and show the rows in **Scheduled**.
+3. **1:45–2:30 — Delivery:** Show messages in Ethereal and the dashboard's **Sent** view.
+4. **2:30–3:45 — Restart recovery:** Schedule another future message, stop and restart the API/worker (leave PostgreSQL and Redis volumes intact), then show the queued email remains and later appears under **Sent**.
+5. **3:45–4:30 — Rate-limit bonus:** Briefly show multiple jobs for one sender respecting the configured pacing/hourly cap and remaining queued when the cap is reached.
+6. **4:30–5:00 — Trade-offs:** Mention the SMTP/database uncertain-outcome behavior and that Ethereal is test-only.
+
+The demo recording is not included in this repository yet. Record and upload the real run (for example, as `demo.mp4` or an unlisted video link) before submitting; the current environment lacks Docker, configured OAuth/SMTP credentials, and a screen-recording tool, so a genuine backend-restart video cannot be captured here.
 
 ## Build
 
 ```powershell
 npm run build
 ```
-
-## Assignment submission checklist
-
-This workspace contains the implementation and run instructions. Creating a private GitHub repository, granting reviewers access, recording the requested demo video, and submitting the form require your own accounts and are not automated here.
